@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Tax Invoice - {{invoiceNumber}}</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 11px; color: #1a1a2e; background: #fff; }
+  .page { width: 210mm; min-height: 297mm; padding: 12mm; margin: 0 auto; }
+
+  /* Header */
+  .header { display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 3px solid #4F46E5; padding-bottom: 12px; margin-bottom: 16px; }
+  .company-name { font-size: 22px; font-weight: 800; color: #4F46E5; letter-spacing: -0.5px; }
+  .company-sub { font-size: 10px; color: #64748b; margin-top: 2px; }
+  .company-details { font-size: 10px; color: #475569; line-height: 1.6; }
+  .invoice-badge { background: #4F46E5; color: white; padding: 4px 12px; border-radius: 4px; font-size: 10px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; margin-bottom: 6px; display: inline-block; }
+  .invoice-meta { text-align: right; }
+  .invoice-number { font-size: 18px; font-weight: 700; color: #1e293b; }
+  .invoice-date { font-size: 10px; color: #64748b; margin-top: 2px; }
+
+  /* Party Details */
+  .parties { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px; }
+  .party-box { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 12px; }
+  .party-label { font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; color: #94a3b8; margin-bottom: 6px; }
+  .party-name { font-size: 13px; font-weight: 700; color: #1e293b; margin-bottom: 4px; }
+  .party-gstin { font-family: 'Courier New', monospace; font-size: 11px; color: #4F46E5; font-weight: 600; }
+  .party-detail { font-size: 10px; color: #64748b; line-height: 1.5; }
+
+  /* Supply Info */
+  .supply-info { display: flex; gap: 12px; margin-bottom: 16px; }
+  .supply-tag { background: {{#if isInterState}}#fef3c7{{else}}#dcfce7{{/if}}; color: {{#if isInterState}}#92400e{{else}}#166534{{/if}}; padding: 4px 10px; border-radius: 20px; font-size: 10px; font-weight: 600; }
+
+  /* Invoice Table */
+  .table-wrap { margin-bottom: 16px; border-radius: 8px; overflow: hidden; border: 1px solid #e2e8f0; }
+  table { width: 100%; border-collapse: collapse; }
+  thead { background: #4F46E5; }
+  thead th { color: white; padding: 8px 10px; text-align: left; font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; }
+  thead th:last-child, thead th:nth-last-child(2), thead th:nth-last-child(3), thead th:nth-last-child(4) { text-align: right; }
+  tbody tr { border-bottom: 1px solid #f1f5f9; }
+  tbody tr:last-child { border-bottom: none; }
+  tbody tr:nth-child(even) { background: #fafafa; }
+  tbody td { padding: 8px 10px; font-size: 10px; color: #374151; }
+  tbody td:last-child, tbody td:nth-last-child(2), tbody td:nth-last-child(3), tbody td:nth-last-child(4) { text-align: right; }
+  .hsn-code { font-family: 'Courier New', monospace; font-size: 10px; color: #6366f1; }
+
+  /* Tax Summary */
+  .summary-wrap { display: grid; grid-template-columns: 1fr 280px; gap: 16px; margin-bottom: 16px; }
+  .amount-words { background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 8px; padding: 12px; }
+  .amount-words-label { font-size: 9px; font-weight: 700; text-transform: uppercase; color: #166534; margin-bottom: 4px; }
+  .amount-words-text { font-size: 11px; font-weight: 600; color: #166534; }
+  .tax-table { border: 1px solid #e2e8f0; border-radius: 8px; overflow: hidden; }
+  .tax-row { display: flex; justify-content: space-between; padding: 6px 12px; border-bottom: 1px solid #f1f5f9; font-size: 10px; }
+  .tax-row:last-child { border-bottom: none; }
+  .tax-row.subtotal { background: #f8fafc; }
+  .tax-row.total { background: #4F46E5; color: white; font-weight: 700; font-size: 12px; }
+  .tax-label { color: #64748b; }
+  .tax-row.total .tax-label { color: white; }
+  .tax-value { font-weight: 600; font-family: 'Courier New', monospace; }
+
+  /* Footer */
+  .footer { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-top: 24px; padding-top: 16px; border-top: 2px dashed #e2e8f0; }
+  .sig-block { }
+  .sig-label { font-size: 9px; font-weight: 700; text-transform: uppercase; color: #94a3b8; margin-bottom: 32px; }
+  .sig-line { border-top: 1px solid #1e293b; padding-top: 4px; font-size: 10px; font-weight: 600; color: #1e293b; }
+  .notes { font-size: 10px; color: #64748b; line-height: 1.6; }
+  .notes-title { font-weight: 700; color: #374151; margin-bottom: 4px; }
+  .watermark { color: #94a3b8; font-size: 9px; text-align: center; margin-top: 16px; }
+
+  /* Tax type badge */
+  .igst-row { color: #7c3aed; }
+  .cgst-row { color: #059669; }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <!-- Header -->
+  <div class="header">
+    <div>
+      <div class="company-name">⚡ GSTPro</div>
+      <div class="company-sub">Automated GST Compliance Platform</div>
+      <div style="margin-top:8px">
+        <div class="company-details">
+          <strong>{{company.name}}</strong><br/>
+          GSTIN: <span style="font-family:monospace;color:#4F46E5">{{company.gstin}}</span><br/>
+          PAN: <span style="font-family:monospace">{{company.pan}}</span><br/>
+          State Code: {{company.stateCode}}
+        </div>
+      </div>
+    </div>
+    <div class="invoice-meta">
+      <div class="invoice-badge">Tax Invoice</div>
+      <div class="invoice-number">{{invoiceNumber}}</div>
+      <div class="invoice-date">Date: {{invoiceDate}}</div>
+      {{#if irn}}
+      <div style="margin-top:6px;font-size:9px;color:#64748b">
+        IRN: <span style="font-family:monospace;font-size:8px">{{irn}}</span>
+      </div>
+      {{/if}}
+      {{#if ackNo}}
+      <div style="font-size:9px;color:#64748b">Ack No: {{ackNo}}</div>
+      {{/if}}
+    </div>
+  </div>
+
+  <!-- Party Details -->
+  <div class="parties">
+    <div class="party-box">
+      <div class="party-label">Bill From (Supplier)</div>
+      <div class="party-name">{{company.name}}</div>
+      <div class="party-gstin">{{company.gstin}}</div>
+      <div class="party-detail">State Code: {{company.stateCode}}</div>
+    </div>
+    <div class="party-box">
+      <div class="party-label">Bill To (Recipient)</div>
+      <div class="party-name">{{customerName}}</div>
+      {{#if customerGSTIN}}
+      <div class="party-gstin">{{customerGSTIN}}</div>
+      {{else}}
+      <div class="party-detail" style="color:#f59e0b">Unregistered Dealer (B2C)</div>
+      {{/if}}
+      <div class="party-detail">Place of Supply: {{placeOfSupply}}</div>
+    </div>
+  </div>
+
+  <!-- Supply Type -->
+  <div class="supply-info">
+    <span class="supply-tag">
+      {{#if isInterState}}⚡ Inter-State Supply (IGST){{else}}✓ Intra-State Supply (CGST + SGST){{/if}}
+    </span>
+    <span class="supply-tag" style="background:#e0e7ff;color:#3730a3">
+      {{invoiceType}}
+    </span>
+  </div>
+
+  <!-- Invoice Table -->
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>HSN/SAC</th>
+          <th>Description</th>
+          <th>Qty</th>
+          <th>Rate (₹)</th>
+          <th>Taxable (₹)</th>
+          {{#if isInterState}}
+          <th>IGST (₹)</th>
+          {{else}}
+          <th>CGST (₹)</th>
+          <th>SGST (₹)</th>
+          {{/if}}
+          <th>Total (₹)</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>1</td>
+          <td><span class="hsn-code">{{hsnCode}}</span></td>
+          <td>{{hsnDescription}}</td>
+          <td>1</td>
+          <td>{{formatCurrency taxableValue}}</td>
+          <td>{{formatCurrency taxableValue}}</td>
+          {{#if isInterState}}
+          <td class="igst-row">{{formatCurrency igst}}</td>
+          {{else}}
+          <td class="cgst-row">{{formatCurrency cgst}}</td>
+          <td class="cgst-row">{{formatCurrency sgst}}</td>
+          {{/if}}
+          <td><strong>{{formatCurrency totalAmount}}</strong></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- Tax Summary -->
+  <div class="summary-wrap">
+    <div class="amount-words">
+      <div class="amount-words-label">Amount in Words</div>
+      <div class="amount-words-text">{{amountInWords}}</div>
+      <div style="margin-top:8px;font-size:9px;color:#166534">
+        Invoice total: ₹{{formatCurrency totalAmount}}
+      </div>
+    </div>
+    <div>
+      <div class="tax-table">
+        <div class="tax-row subtotal">
+          <span class="tax-label">Taxable Value</span>
+          <span class="tax-value">₹{{formatCurrency taxableValue}}</span>
+        </div>
+        {{#if isInterState}}
+        <div class="tax-row">
+          <span class="tax-label" style="color:#7c3aed">IGST @ {{igstRate}}%</span>
+          <span class="tax-value" style="color:#7c3aed">₹{{formatCurrency igst}}</span>
+        </div>
+        {{else}}
+        <div class="tax-row">
+          <span class="tax-label" style="color:#059669">CGST @ {{cgstRate}}%</span>
+          <span class="tax-value" style="color:#059669">₹{{formatCurrency cgst}}</span>
+        </div>
+        <div class="tax-row">
+          <span class="tax-label" style="color:#059669">SGST @ {{sgstRate}}%</span>
+          <span class="tax-value" style="color:#059669">₹{{formatCurrency sgst}}</span>
+        </div>
+        {{/if}}
+        <div class="tax-row" style="background:#fafafa;font-weight:600;">
+          <span class="tax-label" style="color:#374151">Total Tax</span>
+          <span class="tax-value">₹{{formatCurrency totalTax}}</span>
+        </div>
+        <div class="tax-row total">
+          <span class="tax-label">Grand Total</span>
+          <span class="tax-value">₹{{formatCurrency totalAmount}}</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Footer -->
+  <div class="footer">
+    <div class="notes">
+      <div class="notes-title">Terms & Notes</div>
+      <div>1. This is a computer-generated invoice.</div>
+      <div>2. E&amp;OE — Errors and Omissions Excepted.</div>
+      <div>3. Subject to jurisdiction of {{company.stateCode}} courts.</div>
+      <div>4. Payment due within 30 days of invoice date.</div>
+      {{#if irn}}
+      <div style="margin-top:6px;padding:6px;background:#f0fdf4;border-radius:4px;font-size:9px;color:#166534">
+        ✅ This invoice has been registered on IRP.<br/>
+        IRN: {{irn}}
+      </div>
+      {{/if}}
+    </div>
+    <div class="sig-block">
+      <div class="sig-label">For {{company.name}}</div>
+      <div class="sig-line">Authorised Signatory</div>
+      <div style="font-size:9px;color:#94a3b8;margin-top:4px">GSTIN: {{company.gstin}}</div>
+    </div>
+  </div>
+
+  <div class="watermark">
+    Generated by GSTPro · {{generatedAt}} · This document is digitally generated and is legally valid.
+  </div>
+
+</div>
+</body>
+</html>

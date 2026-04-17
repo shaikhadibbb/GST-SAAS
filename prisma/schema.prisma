@@ -1,0 +1,582 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum SyncStatus {
+  IDLE
+  SYNCING
+  ERROR
+}
+
+enum SubscriptionPlan {
+  BASIC
+  PRO
+  ENTERPRISE
+}
+
+enum CompanyStatus {
+  ACTIVE
+  SUSPENDED
+}
+
+enum MemberRole {
+  ADMIN
+  CA
+  ACCOUNTANT
+  VIEWER
+  DATA_ENTRY
+}
+
+enum MemberStatus {
+  ACTIVE
+  PENDING
+}
+
+// ─────────────────────────────────────────────
+// CORE USER & COMPANY
+// ─────────────────────────────────────────────
+
+model User {
+  id                   String             @id @default(uuid())
+  email                String             @unique
+  password             String
+  role                 Role               @default(ACCOUNTANT)
+  companyId            String?            // Optional: remains for primary/fallback compatibility
+  company              Company?           @relation("PrimaryCompany", fields: [companyId], references: [id])
+  memberships          CompanyMember[]
+  verified             Boolean            @default(false)
+  deletionRequestedAt  DateTime?
+  referralCode         String?            @unique
+  referredBy           String?
+  referralCredits      Float              @default(0)
+  createdAt            DateTime           @default(now())
+
+  auditLogs            AuditLog[]
+  consentLogs          ConsentLog[]
+  sessions             Session[]
+  caPartnerProfile     CAPartner?
+  clientAssignments    ClientAssignment[] @relation("ClientUser")
+  subscription         Subscription?
+  onboarding           OnboardingProgress?
+
+  @@index([companyId])
+}
+
+model Company {
+  id               String              @id @default(uuid())
+  name             String
+  tradeName        String?
+  gstin            String              @unique
+  pan              String
+  stateCode        String
+  subscriptionPlan SubscriptionPlan    @default(BASIC)
+  status           CompanyStatus       @default(ACTIVE)
+  
+  primaryUsers     User[]              @relation("PrimaryCompany")
+  members          CompanyMember[]
+  invitations      Invitation[]
+  
+  gstins           GSTINRegistration[]
+  createdAt        DateTime            @default(now())
+  clientConfig     ClientConfig?
+  onboarding       OnboardingProgress[]
+}
+
+model CompanyMember {
+  id        String       @id @default(uuid())
+  companyId String
+  company   Company      @relation(fields: [companyId], references: [id])
+  userId    String
+  user      User         @relation(fields: [userId], references: [id])
+  role      MemberRole   @default(VIEWER)
+  status    MemberStatus @default(ACTIVE)
+  invitedAt DateTime     @default(now())
+  joinedAt  DateTime?
+
+  @@unique([userId, companyId])
+  @@index([companyId])
+}
+
+model Invitation {
+  id        String     @id @default(uuid())
+  companyId String
+  company   Company    @relation(fields: [companyId], references: [id])
+  email     String
+  role      MemberRole @default(VIEWER)
+  token     String     @unique
+  expiresAt DateTime
+  accepted  Boolean    @default(false)
+  createdAt DateTime   @default(now())
+
+  @@index([companyId])
+  @@index([email])
+}
+
+model OnboardingProgress {
+  id          String    @id @default(uuid())
+  userId      String    @unique
+  user        User      @relation(fields: [userId], references: [id])
+  companyId   String
+  company     Company   @relation(fields: [companyId], references: [id])
+  steps       Json      // Tracks { stepId: boolean }
+  completedAt DateTime?
+  createdAt   DateTime  @default(now())
+
+  @@index([companyId])
+}
+
+model GSTINRegistration {
+  id        String    @id @default(uuid())
+  gstin     String
+  state     String
+  companyId String
+  company   Company   @relation(fields: [companyId], references: [id])
+  invoices  Invoice[]
+  
+  // GSTN API Credentials & Sync Status
+  gspUsername   String?
+  gspPassword   String?     // AES-256 encrypted using ENCRYPTION_KEY
+  lastSyncAt    DateTime?
+  syncStatus    SyncStatus  @default(IDLE)
+  syncError     String?
+
+  createdAt DateTime  @default(now())
+
+  @@unique([gstin, companyId])
+  @@index([companyId])
+}
+
+model Invoice {
+  id            String            @id @default(uuid())
+  invoiceNumber String
+  invoiceDate   DateTime
+  customerGSTIN String?
+  customerName  String
+  placeOfSupply String
+  totalAmount   Decimal           @db.Decimal(15, 2)
+  taxableValue  Decimal           @db.Decimal(15, 2)
+  cgst          Decimal           @db.Decimal(15, 2)
+  sgst          Decimal           @db.Decimal(15, 2)
+  igst          Decimal           @db.Decimal(15, 2)
+  totalTax      Decimal           @db.Decimal(15, 2)
+  irn           String?           @unique
+  qrCode        String?
+  ackNo         String?
+  ackDate       DateTime?
+  status        InvoiceStatus     @default(DRAFT)
+  invoiceType   InvoiceType       @default(B2B)
+  pdfUrl        String?
+  gstinRegId    String
+  gstinReg      GSTINRegistration @relation(fields: [gstinRegId], references: [id])
+  hsnCode       String?
+  deletedAt     DateTime?
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+  auditLogs     AuditLog[]
+
+  @@index([gstinRegId])
+  @@index([status])
+  @@index([invoiceDate])
+  @@index([deletedAt])
+  @@index([gstinRegId, invoiceNumber])
+  @@index([gstinRegId, invoiceDate, status])
+  @@index([gstinRegId, deletedAt])
+}
+
+model GSTR2AEntry {
+  id            String   @id @default(uuid())
+  gstin         String
+  invoiceNumber String
+  invoiceDate   DateTime
+  taxableValue  Decimal  @db.Decimal(15, 2)
+  igst          Decimal  @db.Decimal(15, 2)
+  cgst          Decimal  @db.Decimal(15, 2)
+  sgst          Decimal  @db.Decimal(15, 2)
+  matched       Boolean  @default(false)
+  invoiceId     String?
+  supplierGSTIN String?
+  companyId     String
+  createdAt     DateTime @default(now())
+
+  @@index([gstin])
+  @@index([companyId])
+  @@index([matched])
+  @@index([companyId, gstin, invoiceDate])
+  @@index([companyId, matched])
+}
+
+model AuditLog {
+  id         String   @id @default(uuid())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id])
+  action     String
+  entityType String
+  entityId   String
+  invoiceId  String?
+  invoice    Invoice? @relation(fields: [invoiceId], references: [id])
+  before     Json?
+  after      Json?
+  metadata   Json?
+  ipAddress  String?
+  
+  hash         String?  // SHA256(prevHash + action + entityId + timestamp)
+  previousHash String?
+
+  createdAt  DateTime @default(now())
+
+  @@index([entityType, entityId])
+  @@index([userId])
+  @@index([createdAt])
+  @@index([invoiceId])
+}
+
+// ─────────────────────────────────────────────
+// SESSION + CONSENT + CONFIG
+// ─────────────────────────────────────────────
+
+model Session {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  jti       String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([jti])
+  @@index([expiresAt])
+}
+
+model ClientConfig {
+  id                String   @id @default(uuid())
+  companyId         String   @unique
+  company           Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  dateToleranceDays Int      @default(2)
+  updatedAt         DateTime @updatedAt
+  createdAt         DateTime @default(now())
+
+  @@index([companyId])
+}
+
+model ConsentLog {
+  id        String         @id @default(uuid())
+  userId    String
+  user      User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  purpose   ConsentPurpose
+  granted   Boolean        @default(true)
+  ipAddress String?
+  version   String         @default("1.0")
+  createdAt DateTime       @default(now())
+
+  @@index([userId])
+  @@index([purpose])
+  @@index([createdAt])
+}
+
+model PdfJob {
+  id          String       @id @default(uuid())
+  invoiceId   String
+  requestedBy String
+  companyId   String
+  status      PdfJobStatus @default(PENDING)
+  attempts    Int          @default(0)
+  errorMsg    String?
+  downloadUrl String?
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  @@index([invoiceId])
+  @@index([requestedBy])
+  @@index([companyId, status])
+}
+
+// ─────────────────────────────────────────────
+// CA PARTNER PORTAL
+// ─────────────────────────────────────────────
+
+model CAPartner {
+  id                String           @id @default(uuid())
+  userId            String           @unique
+  user              User             @relation(fields: [userId], references: [id])
+
+  firmName          String
+  firmLogo          String?
+  firmWebsite       String?
+  firmAddress       String?
+  firmGstin         String?
+
+  primaryColor      String           @default("#4F46E5")
+  secondaryColor    String           @default("#10B981")
+  subdomain         String?          @unique
+
+  commissionRate    Float            @default(0.20)
+  totalEarned       Float            @default(0)
+  totalPaidOut      Float            @default(0)
+  pendingCommission Float            @default(0)
+
+  status            PartnerStatus    @default(PENDING_APPROVAL)
+  approvedAt        DateTime?
+  approvedBy        String?
+
+  clients           ClientAssignment[]
+  commissionLogs    CommissionLog[]
+
+  // Whitelabel fields
+  customEmailDomain String?          @unique
+  customSenderName  String?
+  whitelabelSettings Json?           // { logoWidth, hideGstProBranding, etc }
+
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+
+  @@index([status])
+  @@index([subdomain])
+}
+
+model ClientAssignment {
+  id             String           @id @default(uuid())
+  caPartnerId    String
+  caPartner      CAPartner        @relation(fields: [caPartnerId], references: [id], onDelete: Cascade)
+  clientId       String
+  client         User             @relation("ClientUser", fields: [clientId], references: [id])
+
+  assignedAt     DateTime         @default(now())
+  assignedBy     String
+  commissionRate Float            @default(0.20)
+  status         AssignmentStatus @default(ACTIVE)
+  unassignedAt   DateTime?
+  unassignReason String?
+
+  lastActivityAt    DateTime      @default(now())
+  totalItcRecovered Float         @default(0)
+
+  commissionLogs    CommissionLog[]
+
+  @@unique([caPartnerId, clientId])
+  @@index([clientId])
+  @@index([status])
+}
+
+model CommissionLog {
+  id                 String           @id @default(uuid())
+  caPartnerId        String
+  caPartner          CAPartner        @relation(fields: [caPartnerId], references: [id])
+  clientAssignmentId String
+  clientAssignment   ClientAssignment @relation(fields: [clientAssignmentId], references: [id])
+  clientId           String
+
+  subscriptionId     String
+  baseAmount         Float
+  commissionRate     Float
+  commissionAmount   Float
+  gstOnCommission    Float            @default(0)
+  netPayout          Float
+
+  month              String
+  year               Int
+
+  status             CommissionStatus @default(PENDING)
+  invoiceGeneratedAt DateTime?
+  invoiceUrl         String?
+  paidAt             DateTime?
+  paymentReference   String?
+  paidBy             String?
+  notes              String?
+
+  createdAt          DateTime         @default(now())
+  updatedAt          DateTime         @updatedAt
+
+  @@index([caPartnerId, month])
+  @@index([status])
+}
+
+// ─────────────────────────────────────────────
+// SUBSCRIPTION BILLING
+// ─────────────────────────────────────────────
+
+model Subscription {
+  id                     String             @id @default(uuid())
+  userId                 String             @unique
+  user                   User               @relation(fields: [userId], references: [id])
+
+  plan                   PlanType           @default(FREE)
+  status                 SubscriptionStatus @default(TRIAL)
+  billingCycle           BillingCycle       @default(MONTHLY)
+
+  currentPeriodStart     DateTime
+  currentPeriodEnd       DateTime
+  trialEndsAt            DateTime?
+  gracePeriodEndsAt      DateTime?
+
+  razorpayCustomerId     String?
+  razorpaySubscriptionId String?
+  razorpayPlanId         String?
+
+  usage                  Json               @default("{}")
+  cancelledAt            DateTime?
+  cancellationReason     String?
+  downgradeTo            PlanType?
+
+  usageHistory           UsageLog[]
+
+  createdAt              DateTime           @default(now())
+  updatedAt              DateTime           @updatedAt
+
+  @@index([status])
+  @@index([currentPeriodEnd])
+}
+
+model UsageLog {
+  id              String       @id @default(uuid())
+  subscriptionId  String
+  subscription    Subscription @relation(fields: [subscriptionId], references: [id])
+
+  period          String
+  year            Int
+
+  invoicesCreated Int          @default(0)
+  invoicesLimit   Int
+  gstinsActive    Int          @default(0)
+  gstinsLimit     Int
+  apiCalls        Int          @default(0)
+  apiLimit        Int
+  bulkOperations  Int          @default(0)
+  bulkLimit       Int
+
+  overageCharges  Float        @default(0)
+  overageDetails  Json?
+
+  createdAt       DateTime     @default(now())
+
+  @@unique([subscriptionId, period])
+}
+
+model InvoiceUsage {
+  id             String   @id @default(uuid())
+  subscriptionId String
+  date           DateTime @default(now())
+  count          Int      @default(0)
+
+  @@unique([subscriptionId, date])
+  @@index([subscriptionId])
+}
+
+// ─────────────────────────────────────────────
+// WHATSAPP & NOTICE DEFENSE
+// ─────────────────────────────────────────────
+
+model WhatsAppConnection {
+  id              String   @id @default(uuid())
+  companyId       String   @unique
+  phoneNumber     String
+  whatsappId      String?  @unique
+  status          String   @default("PENDING") // PENDING, CONNECTED, DISCONNECTED
+  lastSyncAt      DateTime?
+  createdAt       DateTime @default(now())
+}
+
+model NoticeDefense {
+  id              String   @id @default(uuid())
+  companyId       String
+  noticePdfUrl    String
+  analysisResult  Json?    // Stores Gemini extraction and legal advice
+  status          String   @default("PENDING")
+  paymentStatus   String   @default("UNPAID")
+  paymentId       String?
+  createdAt       DateTime @default(now())
+
+  @@index([companyId])
+}
+
+// ─────────────────────────────────────────────
+// ENUMS
+// ─────────────────────────────────────────────
+
+enum Role {
+  ADMIN
+  COMPLIANCE_OFFICER
+  CA
+  ACCOUNTANT
+  VIEWER
+  CA_PARTNER
+}
+
+enum InvoiceStatus {
+  DRAFT
+  GENERATED
+  IRN_GENERATED
+  GSTR1_FILED
+  RECONCILED
+  CANCELLED
+}
+
+enum InvoiceType {
+  B2B
+  B2CS
+  B2CL
+  EXPORT
+  SEZ
+}
+
+enum ConsentPurpose {
+  INVOICE_PROCESSING
+  VENDOR_RECONCILIATION
+  MARKETING
+}
+
+enum PdfJobStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+  DEAD_LETTER
+}
+
+enum PartnerStatus {
+  PENDING_APPROVAL
+  ACTIVE
+  SUSPENDED
+  TERMINATED
+}
+
+enum AssignmentStatus {
+  ACTIVE
+  PAUSED
+  UNASSIGNED
+}
+
+enum CommissionStatus {
+  PENDING
+  INVOICED
+  PAID
+  DISPUTED
+  CANCELLED
+}
+
+enum PlanType {
+  FREE
+  STARTER
+  GROWTH
+  PRO
+  CA_FIRM
+  ENTERPRISE
+}
+
+enum SubscriptionStatus {
+  TRIAL
+  ACTIVE
+  PAST_DUE
+  UNPAID
+  CANCELLED
+  PAUSED
+}
+
+enum BillingCycle {
+  MONTHLY
+  ANNUAL
+}
